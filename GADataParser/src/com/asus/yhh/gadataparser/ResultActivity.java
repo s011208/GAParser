@@ -41,7 +41,9 @@ import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.AdapterView;
+import android.widget.AutoCompleteTextView;
 import android.widget.BaseAdapter;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -53,6 +55,10 @@ public class ResultActivity extends Activity {
     private static final float PIE_CHART_IGNORE_THRESHOLD = 0.03f;
 
     private String[] mParsingPathes;
+
+    private AutoCompleteTextView mSearchText;
+
+    private SearchingTextAdapter mSearchingTextAdapter;
 
     private ListView mPackageList;
 
@@ -174,7 +180,8 @@ public class ResultActivity extends Activity {
                 mReportListAdapter.notifyDataSetChanged();
                 mPackageListAdapter.setSelectedPosition(-1);
                 clearChart();
-                new GaParser(mPackageListAdapter, mSwipeRefreshLayout).execute(mParsingPathes);
+                new GaParser(mPackageListAdapter, mSwipeRefreshLayout, mSearchingTextAdapter)
+                        .execute(mParsingPathes);
             }
         });
         mSwipeRefreshLayout.setColorScheme(android.R.color.holo_blue_bright,
@@ -205,7 +212,13 @@ public class ResultActivity extends Activity {
         mReportList.setAdapter(mReportListAdapter);
         mReportSwitcher = (ViewSwitcher)findViewById(R.id.report_switcher);
         mReportSwitcher.setDisplayedChild(0);
-        new GaParser(mPackageListAdapter, mSwipeRefreshLayout).execute(mParsingPathes);
+        mSearchText = (AutoCompleteTextView)findViewById(R.id.search_text);
+        mSearchingTextAdapter = new SearchingTextAdapter(this, android.R.layout.simple_list_item_1);
+        if (mSearchText != null) {
+            mSearchText.setAdapter(mSearchingTextAdapter);
+        }
+        new GaParser(mPackageListAdapter, mSwipeRefreshLayout, mSearchingTextAdapter)
+                .execute(mParsingPathes);
     }
 
     public void onResume() {
@@ -443,28 +456,37 @@ public class ResultActivity extends Activity {
     }
 
     public static class GaParser extends AsyncTask<String, Void, Void> {
+        private SearchingTextAdapter mSearchingTextAdapter;
+
         private PackageListAdapter mAdapter;
 
         private SwipeRefreshLayout mSwipeRefreshLayout;
 
         private final HashMap<ComponentName, ParsedData> mData = new HashMap<ComponentName, ParsedData>();
 
-        public GaParser(PackageListAdapter adapter, SwipeRefreshLayout swipeRefreshLayout) {
+        private final HashMap<String, String> mSearchingText = new HashMap<String, String>();
+
+        public GaParser(PackageListAdapter adapter, SwipeRefreshLayout swipeRefreshLayout,
+                SearchingTextAdapter searchingTextAdapter) {
             mAdapter = adapter;
             mSwipeRefreshLayout = swipeRefreshLayout;
             mAdapter.setData(new HashMap<ComponentName, ParsedData>());
             mAdapter.notifyDataSetChanged();
+            mSearchingTextAdapter = searchingTextAdapter;
+            mSearchingTextAdapter.clearData();
+            mSearchingTextAdapter.notifyDataSetChanged();
         }
 
         @Override
         protected Void doInBackground(String... params) {
             for (String path : params) {
-                processData(gaRawHtmParser(path), mData);
+                processData(gaRawHtmParser(path), mData, mSearchingText);
             }
             return null;
         }
 
-        private static void processData(String rawData, HashMap<ComponentName, ParsedData> wholeData) {
+        private static void processData(String rawData,
+                HashMap<ComponentName, ParsedData> wholeData, HashMap<String, String> mSearchingText) {
             String[] rawItemList = rawData.split(System.lineSeparator());
             for (String rawItem : rawItemList) {
                 try {
@@ -502,6 +524,7 @@ public class ResultActivity extends Activity {
                             // folder container
                             continue;
                         }
+                        mSearchingText.put(pkg, null);
                         ComponentName tempKey = new ComponentName(pkg, clz);
                         if (!wholeData.containsKey(tempKey)) {
                             wholeData
@@ -544,6 +567,12 @@ public class ResultActivity extends Activity {
         protected void onPostExecute(Void params) {
             mAdapter.setData(mData);
             mAdapter.notifyDataSetChanged();
+            Iterator<String> iter = mSearchingText.keySet().iterator();
+            while (iter.hasNext()) {
+                String data = iter.next();
+                mSearchingTextAdapter.addData(data);
+            }
+            mSearchingTextAdapter.notifyDataSetChanged();
             mSwipeRefreshLayout.setRefreshing(false);
         }
     }
