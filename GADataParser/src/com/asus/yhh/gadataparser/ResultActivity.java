@@ -115,9 +115,10 @@ public class ResultActivity extends Activity {
         if (totalCount != 0) {
             pkgs = related.keySet().iterator();
             while (pkgs.hasNext()) {
-                String pkg = pkgs.next().getPackageName();
+                ComponentName com = pkgs.next();
+                String pkg = com.getPackageName();
                 String title = pkgM.getTitle(pkg);
-                int count = related.get(pkg);
+                int count = related.get(com);
                 pkg = title == null ? pkg : title;
                 if (count / totalCount >= PIE_CHART_IGNORE_THRESHOLD) {
                     mSeries.add(pkg, count);
@@ -157,7 +158,7 @@ public class ResultActivity extends Activity {
                 mReportListAdapter.notifyDataSetChanged();
                 mPackageListAdapter.setSelectedPosition(position);
                 mPackageListAdapter.notifyDataSetChanged();
-                // rePainChart(data);
+                rePainChart(data);
             }
         });
         mSwipeRefreshLayout = (SwipeRefreshLayout)findViewById(R.id.swipe_container);
