@@ -39,8 +39,10 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.widget.AdapterView;
 import android.widget.BaseAdapter;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
@@ -142,6 +144,7 @@ public class ResultActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        getWindow().requestFeature(Window.FEATURE_NO_TITLE);
         super.onCreate(savedInstanceState);
         setContentView(R.layout.result_activity);
         mParsingPathes = getIntent().getStringArrayExtra("path");
@@ -154,10 +157,11 @@ public class ResultActivity extends Activity {
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                 ParsedData data = mPackageListAdapter.getRawData(mPackageListAdapter
                         .getItem(position));
-                mReportListAdapter.setParsedData(data);
+                mReportListAdapter.setParsedData(data, mPackageListAdapter.getMapData());
                 mReportListAdapter.notifyDataSetChanged();
                 mPackageListAdapter.setSelectedPosition(position);
                 mPackageListAdapter.notifyDataSetChanged();
+                mReportList.smoothScrollToPosition(0);
                 rePainChart(data);
             }
         });
@@ -166,8 +170,9 @@ public class ResultActivity extends Activity {
 
             @Override
             public void onRefresh() {
-                mReportListAdapter.setParsedData(null);
+                mReportListAdapter.setParsedData(null, null);
                 mReportListAdapter.notifyDataSetChanged();
+                mPackageListAdapter.setSelectedPosition(-1);
                 clearChart();
                 new GaParser(mPackageListAdapter, mSwipeRefreshLayout).execute(mParsingPathes);
             }
@@ -237,6 +242,8 @@ public class ResultActivity extends Activity {
 
         private final ArrayList<ComponentName> mPkgs = new ArrayList<ComponentName>();
 
+        private final HashMap<ComponentName, ParsedData> mRelatedData = new HashMap<ComponentName, ParsedData>();
+
         private final ArrayList<Integer> mCounts = new ArrayList<Integer>();
 
         public ReportListAdapter(Context context) {
@@ -244,7 +251,11 @@ public class ResultActivity extends Activity {
             mInflater = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
         }
 
-        public void setParsedData(ParsedData p) {
+        public void setParsedData(ParsedData p, HashMap<ComponentName, ParsedData> relatedData) {
+            mRelatedData.clear();
+            if (relatedData != null) {
+                mRelatedData.putAll(relatedData);
+            }
             mPkgs.clear();
             mCounts.clear();
             if (p == null) {
@@ -280,9 +291,11 @@ public class ResultActivity extends Activity {
         public View getView(int position, View convertView, ViewGroup parent) {
             ViewHolder holder = null;
             if (convertView == null) {
-                convertView = mInflater.inflate(R.layout.file_list_view, null);
+                convertView = mInflater.inflate(R.layout.pkg_list_view, null);
                 holder = new ViewHolder();
-                holder.mtxt = (TextView)convertView.findViewById(R.id.file_name);
+                holder.mtxt = (TextView)convertView.findViewById(R.id.package_title);
+                holder.mDetailed = (TextView)convertView.findViewById(R.id.detailed);
+                holder.mImg = (ImageView)convertView.findViewById(R.id.type_img);
                 convertView.setTag(holder);
             } else {
                 holder = (ViewHolder)convertView.getTag();
@@ -291,11 +304,24 @@ public class ResultActivity extends Activity {
             int count = mCounts.get(position);
             PackageMatcher.getInstance(mContext)
                     .setTitle(holder.mtxt, count, item.getPackageName());
+            ParsedData pData = mRelatedData.get(item);
+            if (pData != null) {
+                if (pData.mType == ParsedData.TYPE_SHORTCUT) {
+                    holder.mImg.setImageResource(R.drawable.shortcut);
+                } else {
+                    holder.mImg.setImageResource(R.drawable.widget);
+                }
+            }
+            holder.mDetailed.setText(item.getPackageName() + "\n" + item.getClassName());
             return convertView;
         }
 
         private static class ViewHolder {
             TextView mtxt;
+
+            TextView mDetailed;
+
+            ImageView mImg;
         }
     }
 
@@ -325,6 +351,10 @@ public class ResultActivity extends Activity {
             mRelatedData.putAll(relatedData);
             mData.clear();
             mData.addAll(sortPkgs(mRelatedData));
+        }
+
+        public HashMap<ComponentName, ParsedData> getMapData() {
+            return mRelatedData;
         }
 
         private static ArrayList<ComponentName> sortPkgs(
@@ -369,27 +399,46 @@ public class ResultActivity extends Activity {
         public View getView(int position, View convertView, ViewGroup parent) {
             ViewHolder holder = null;
             if (convertView == null) {
-                convertView = mInflater.inflate(R.layout.file_list_view, null);
+                convertView = mInflater.inflate(R.layout.pkg_list_view, null);
                 holder = new ViewHolder();
-                holder.mtxt = (TextView)convertView.findViewById(R.id.file_name);
+                holder.mTitle = (TextView)convertView.findViewById(R.id.package_title);
+                holder.mDetailed = (TextView)convertView.findViewById(R.id.detailed);
+                holder.mImg = (ImageView)convertView.findViewById(R.id.type_img);
                 convertView.setTag(holder);
             } else {
                 holder = (ViewHolder)convertView.getTag();
             }
             ComponentName item = getItem(position);
             ParsedData pData = mRelatedData.get(item);
-            PackageMatcher.getInstance(mContext).setTitle(holder.mtxt, pData.meetCount,
+            PackageMatcher.getInstance(mContext).setTitle(holder.mTitle, pData.meetCount,
                     item.getPackageName());
             if (mSelectedPosition == position) {
-                holder.mtxt.setTextColor(Color.RED);
+                if (pData.mType == ParsedData.TYPE_SHORTCUT) {
+                    holder.mTitle.setTextColor(Color.argb(150, 52, 139, 254));
+                    holder.mDetailed.setTextColor(Color.argb(150, 52, 139, 254));
+                } else {
+                    holder.mTitle.setTextColor(Color.argb(150, 254, 219, 61));
+                    holder.mDetailed.setTextColor(Color.argb(150, 254, 219, 61));
+                }
             } else {
-                holder.mtxt.setTextColor(Color.WHITE);
+                holder.mDetailed.setTextColor(Color.WHITE);
+                holder.mTitle.setTextColor(Color.WHITE);
+            }
+            holder.mDetailed.setText(item.getPackageName() + "\n" + item.getClassName());
+            if (pData.mType == ParsedData.TYPE_SHORTCUT) {
+                holder.mImg.setImageResource(R.drawable.shortcut);
+            } else {
+                holder.mImg.setImageResource(R.drawable.widget);
             }
             return convertView;
         }
 
         private static class ViewHolder {
-            TextView mtxt;
+            TextView mTitle;
+
+            TextView mDetailed;
+
+            ImageView mImg;
         }
     }
 
