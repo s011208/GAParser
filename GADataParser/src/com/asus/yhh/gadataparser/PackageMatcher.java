@@ -1,7 +1,8 @@
 
 package com.asus.yhh.gadataparser;
 
-import java.io.File;
+import java.io.IOException;
+import java.lang.ref.WeakReference;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -10,11 +11,11 @@ import org.jsoup.select.Elements;
 
 import android.content.ContentValues;
 import android.content.Context;
+import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
 import android.database.sqlite.SQLiteFullException;
 import android.database.sqlite.SQLiteOpenHelper;
-import android.database.sqlite.SQLiteStatement;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.util.Log;
@@ -25,7 +26,7 @@ public class PackageMatcher extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "pkg_matcher.db";
 
-    private static final String TAG = "MusicDatabaseHelper";
+    private static final String TAG = "PackageMatcher";
 
     private SQLiteDatabase mDb;
 
@@ -74,17 +75,23 @@ public class PackageMatcher extends SQLiteOpenHelper {
         getDatabase().insert("pkg_matcher", null, cv);
     }
 
-    private String getTitle(String pkg) {
-        SQLiteStatement state = getDatabase().compileStatement(
-                "select title from pkg_matcher where package='" + pkg + "'");
+    public String getTitle(String pkg) {
+        Cursor titleCursor = getDatabase().rawQuery(
+                "select title from pkg_matcher where package='" + pkg + "'", null);
+
         String title = null;
-        if (state != null) {
+        if (titleCursor != null) {
             try {
-                title = state.simpleQueryForString();
+                if (titleCursor.getCount() > 0) {
+                    titleCursor.moveToNext();
+                    title = titleCursor.getString(0);
+                } else {
+                    // ignore
+                }
             } catch (Exception e) {
-                Log.w("QQQQ", "failed", e);
+                Log.w(TAG, "failed", e);
             } finally {
-                state.close();
+                titleCursor.close();
             }
         }
         return title;
@@ -94,7 +101,8 @@ public class PackageMatcher extends SQLiteOpenHelper {
         String title = getTitle(pkg);
         if (title == null) {
             tv.setText(pkg + ", " + count);
-            new TitleParser(tv, count, pkg).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+            new TitleParser(tv, count, pkg, mContext)
+                    .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
         } else {
             tv.setText(title + ", " + count);
         }
@@ -107,21 +115,28 @@ public class PackageMatcher extends SQLiteOpenHelper {
 
         private TextView mTxt;
 
-        public TitleParser(TextView tv, int count, String pkg) {
+        private WeakReference<Context> mContext;
+
+        public TitleParser(TextView tv, int count, String pkg, Context context) {
             mPkg = pkg;
             mCount = count;
             mTxt = tv;
+            mContext = new WeakReference<Context>(context);
         }
 
         @Override
         protected String doInBackground(Void... params) {
-            Log.e("QQQQ", "doInBackground: " + mPkg);
-            Document doc = Jsoup.parse("https://play.google.com/store/apps/details?id=" + mPkg);
-            Elements eles = doc.select("div[class=document-title]").select("div");
+            Log.d(TAG, "doInBackground: " + mPkg);
+            Document doc;
             String title = null;
-            for (Element ele : eles) {
-                Log.e("QQQQ", "ele: " + ele.text());
-                title = ele.text();
+            try {
+                doc = Jsoup.connect("https://play.google.com/store/apps/details?id=" + mPkg).get();
+                Elements eles = doc.select("div[class=document-title]").select("div");
+                for (Element ele : eles) {
+                    title = ele.text();
+                }
+            } catch (IOException e) {
+                Log.w(TAG, "failed", e);
             }
             return title;
         }
@@ -129,10 +144,14 @@ public class PackageMatcher extends SQLiteOpenHelper {
         @Override
         protected void onPostExecute(String params) {
             if (params != null) {
-                Log.e("QQQQ", params + ", " + mCount);
+                Log.i(TAG, params + ", " + mCount);
+                Context context = mContext.get();
+                if (context != null) {
+                    getInstance(context).addTitle(mPkg, params);
+                }
                 mTxt.setText(params + ", " + mCount);
             } else {
-                Log.e("QQQQ", "title is null");
+                Log.w(TAG, "title is null");
             }
         }
     }

@@ -27,12 +27,14 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Context;
 import android.graphics.Color;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.v4.widget.SwipeRefreshLayout;
 import android.support.v4.widget.SwipeRefreshLayout.OnRefreshListener;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -47,7 +49,7 @@ import android.widget.ViewSwitcher;
 
 public class ResultActivity extends Activity {
     private static final float PIE_CHART_IGNORE_THRESHOLD = 0.03f;
-    
+
     private String[] mParsingPathes;
 
     private ListView mPackageList;
@@ -100,11 +102,12 @@ public class ResultActivity extends Activity {
 
     private void rePainChart(ParsedData data) {
         clearChart();
-        HashMap<String, Integer> related = sortByValues(data.relatedData);
-        Iterator<String> pkgs = related.keySet().iterator();
+        HashMap<ComponentName, Integer> related = sortByValues(data.relatedData);
+        Iterator<ComponentName> pkgs = related.keySet().iterator();
         float totalCount = 0;
+        PackageMatcher pkgM = PackageMatcher.getInstance(getApplicationContext());
         while (pkgs.hasNext()) {
-            String pkg = pkgs.next();
+            ComponentName pkg = pkgs.next();
             totalCount += related.get(pkg);
         }
         boolean lessThan4Percent = false;
@@ -112,8 +115,10 @@ public class ResultActivity extends Activity {
         if (totalCount != 0) {
             pkgs = related.keySet().iterator();
             while (pkgs.hasNext()) {
-                String pkg = pkgs.next();
+                String pkg = pkgs.next().getPackageName();
+                String title = pkgM.getTitle(pkg);
                 int count = related.get(pkg);
+                pkg = title == null ? pkg : title;
                 if (count / totalCount >= PIE_CHART_IGNORE_THRESHOLD) {
                     mSeries.add(pkg, count);
                     SimpleSeriesRenderer renderer = new SimpleSeriesRenderer();
@@ -124,7 +129,7 @@ public class ResultActivity extends Activity {
                     ignoreCount += count;
                 }
             }
-            if(lessThan4Percent){
+            if (lessThan4Percent) {
                 mSeries.add("else", ignoreCount);
                 SimpleSeriesRenderer renderer = new SimpleSeriesRenderer();
                 renderer.setColor(COLORS[(mSeries.getItemCount() - 1) % COLORS.length]);
@@ -150,7 +155,9 @@ public class ResultActivity extends Activity {
                         .getItem(position));
                 mReportListAdapter.setParsedData(data);
                 mReportListAdapter.notifyDataSetChanged();
-                rePainChart(data);
+                mPackageListAdapter.setSelectedPosition(position);
+                mPackageListAdapter.notifyDataSetChanged();
+                // rePainChart(data);
             }
         });
         mSwipeRefreshLayout = (SwipeRefreshLayout)findViewById(R.id.swipe_container);
@@ -202,8 +209,8 @@ public class ResultActivity extends Activity {
         mChartContainer.addView(mChartView);
     }
 
-    private static HashMap sortByValues(HashMap map) {
-        List list = new LinkedList(map.entrySet());
+    private static HashMap<ComponentName, Integer> sortByValues(HashMap<ComponentName, Integer> map) {
+        List<ComponentName> list = new LinkedList(map.entrySet());
         // Defined Custom Comparator here
         Collections.sort(list, new Comparator() {
             public int compare(Object o1, Object o2) {
@@ -224,8 +231,10 @@ public class ResultActivity extends Activity {
 
     private static class ReportListAdapter extends BaseAdapter {
         private LayoutInflater mInflater;
+
         private Context mContext;
-        private final ArrayList<String> mPkgs = new ArrayList<String>();
+
+        private final ArrayList<ComponentName> mPkgs = new ArrayList<ComponentName>();
 
         private final ArrayList<Integer> mCounts = new ArrayList<Integer>();
 
@@ -240,12 +249,12 @@ public class ResultActivity extends Activity {
             if (p == null) {
                 return;
             }
-            HashMap<String, Integer> related = sortByValues(p.relatedData);
-            Iterator<String> pkgs = related.keySet().iterator();
-            while (pkgs.hasNext()) {
-                String pkg = pkgs.next();
-                mPkgs.add(pkg);
-                mCounts.add(related.get(pkg));
+            HashMap<ComponentName, Integer> related = sortByValues(p.relatedData);
+            Iterator<ComponentName> coms = related.keySet().iterator();
+            while (coms.hasNext()) {
+                ComponentName com = coms.next();
+                mPkgs.add(com);
+                mCounts.add(related.get(com));
             }
             Collections.reverse(mPkgs);
             Collections.reverse(mCounts);
@@ -257,7 +266,7 @@ public class ResultActivity extends Activity {
         }
 
         @Override
-        public String getItem(int position) {
+        public ComponentName getItem(int position) {
             return mPkgs.get(position);
         }
 
@@ -277,9 +286,10 @@ public class ResultActivity extends Activity {
             } else {
                 holder = (ViewHolder)convertView.getTag();
             }
-            String item = getItem(position);
+            ComponentName item = getItem(position);
             int count = mCounts.get(position);
-            PackageMatcher.getInstance(mContext).setTitle(holder.mtxt, count, item);
+            PackageMatcher.getInstance(mContext)
+                    .setTitle(holder.mtxt, count, item.getPackageName());
             return convertView;
         }
 
@@ -288,54 +298,36 @@ public class ResultActivity extends Activity {
         }
     }
 
-    private static class ParsedData {
-        private String packageName;
-
-        private String title;
-
-        int meetCount;
-
-        HashMap<String, Integer> relatedData = new HashMap<String, Integer>();
-
-        public ParsedData(String pkg, String title) {
-            packageName = pkg;
-            this.title = title;
-        }
-
-        public void addCount() {
-            ++meetCount;
-        }
-
-        public void addData(String pkg) {
-            Integer times = relatedData.get(pkg);
-            if (times == null) {
-                relatedData.put(pkg, 1);
-            } else {
-                relatedData.put(pkg, times + 1);
-            }
-        }
-    }
-
     private static class PackageListAdapter extends BaseAdapter {
 
-        private final ArrayList<String> mData = new ArrayList<String>();
+        private final ArrayList<ComponentName> mData = new ArrayList<ComponentName>();
 
-        private final HashMap<String, ParsedData> mRelatedData = new HashMap<String, ParsedData>();
+        private final HashMap<ComponentName, ParsedData> mRelatedData = new HashMap<ComponentName, ParsedData>();
 
         private LayoutInflater mInflater;
 
+        private int mSelectedPosition = -1;
+
+        private Context mContext;
+
         public PackageListAdapter(Context context) {
-            mInflater = (LayoutInflater)context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+            mContext = context;
+            mInflater = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
         }
 
-        public void setData(HashMap<String, ParsedData> relatedData) {
+        public void setSelectedPosition(int position) {
+            mSelectedPosition = position;
+        }
+
+        public void setData(HashMap<ComponentName, ParsedData> relatedData) {
             mRelatedData.clear();
             mRelatedData.putAll(relatedData);
             mData.clear();
             mData.addAll(sortPkgs(mRelatedData));
         }
 
-        private static ArrayList<String> sortPkgs(final HashMap<String, ParsedData> relatedData) {
+        private static ArrayList<ComponentName> sortPkgs(
+                final HashMap<ComponentName, ParsedData> relatedData) {
             ArrayList<ParsedData> rData = new ArrayList<ParsedData>(relatedData.values());
             Comparator<ParsedData> comparator = new Comparator<ParsedData>() {
 
@@ -345,9 +337,9 @@ public class ResultActivity extends Activity {
                 }
             };
             Collections.sort(rData, comparator);
-            ArrayList<String> rtn = new ArrayList<String>();
+            ArrayList<ComponentName> rtn = new ArrayList<ComponentName>();
             for (ParsedData data : rData) {
-                rtn.add(data.packageName);
+                rtn.add(new ComponentName(data.packageName, data.mClassName));
             }
             Collections.reverse(rtn);
             return rtn;
@@ -358,12 +350,12 @@ public class ResultActivity extends Activity {
             return mData.size();
         }
 
-        public ParsedData getRawData(String key) {
+        public ParsedData getRawData(ComponentName key) {
             return mRelatedData.get(key);
         }
 
         @Override
-        public String getItem(int position) {
+        public ComponentName getItem(int position) {
             return mData.get(position);
         }
 
@@ -383,9 +375,15 @@ public class ResultActivity extends Activity {
             } else {
                 holder = (ViewHolder)convertView.getTag();
             }
-            String item = getItem(position);
+            ComponentName item = getItem(position);
             ParsedData pData = mRelatedData.get(item);
-            holder.mtxt.setText(item + ", " + pData.meetCount);
+            PackageMatcher.getInstance(mContext).setTitle(holder.mtxt, pData.meetCount,
+                    item.getPackageName());
+            if (mSelectedPosition == position) {
+                holder.mtxt.setTextColor(Color.RED);
+            } else {
+                holder.mtxt.setTextColor(Color.WHITE);
+            }
             return convertView;
         }
 
@@ -399,12 +397,12 @@ public class ResultActivity extends Activity {
 
         private SwipeRefreshLayout mSwipeRefreshLayout;
 
-        private final HashMap<String, ParsedData> mData = new HashMap<String, ParsedData>();
+        private final HashMap<ComponentName, ParsedData> mData = new HashMap<ComponentName, ParsedData>();
 
         public GaParser(PackageListAdapter adapter, SwipeRefreshLayout swipeRefreshLayout) {
             mAdapter = adapter;
             mSwipeRefreshLayout = swipeRefreshLayout;
-            mAdapter.setData(new HashMap<String, ParsedData>());
+            mAdapter.setData(new HashMap<ComponentName, ParsedData>());
             mAdapter.notifyDataSetChanged();
         }
 
@@ -416,46 +414,63 @@ public class ResultActivity extends Activity {
             return null;
         }
 
-        private static void processData(String rawData, HashMap<String, ParsedData> rtn) {
-            String[] dataList = rawData.split("\n");
-            for (String data : dataList) {
+        private static void processData(String rawData, HashMap<ComponentName, ParsedData> wholeData) {
+            String[] rawItemList = rawData.split(System.lineSeparator());
+            for (String rawItem : rawItemList) {
                 try {
-                    // record all pkgs in this data
-                    ArrayList<String> r = new ArrayList<String>();
-                    JSONArray array = new JSONArray(data);
-                    for (int i = 0; i < array.length(); i++) {
-                        JSONObject ob = array.getJSONObject(i);
-                        String intent = ob.getString("intent");
-                        String widget = ob.getString("appWidgetProvider");
+                    // record all pkgs in a page
+                    ArrayList<ComponentName> itemsInThisPage = new ArrayList<ComponentName>();
+                    JSONArray pageItemArray = new JSONArray(rawItem);
+                    boolean isShortCut = true;
+                    // first step: parse all items in a page
+                    for (int i = 0; i < pageItemArray.length(); i++) {
+                        JSONObject item = pageItemArray.getJSONObject(i);
+                        String intent = item.getString("intent");
+                        String widget = item.getString("appWidgetProvider");
+                        String title = item.getString("title");
                         String pkg = null;
+                        String clz = null;
                         if (widget.isEmpty() == false) {
-                            pkg = widget.substring(0, widget.lastIndexOf("/"));
+                            // widget
+                            int indexOfSlash = widget.lastIndexOf("/");
+                            if (indexOfSlash == -1) {
+                                continue;
+                            }
+                            pkg = widget.substring(0, indexOfSlash);
+                            clz = widget.substring(indexOfSlash + 1);
+                            isShortCut = false;
                         } else if (intent.isEmpty() == false) {
-                            pkg = intent.substring(0, intent.lastIndexOf("/"));
+                            // shortcut
+                            int indexOfSlash = intent.lastIndexOf("/");
+                            if (indexOfSlash == -1) {
+                                continue;
+                            }
+                            pkg = intent.substring(0, indexOfSlash);
+                            clz = intent.substring(indexOfSlash + 1);
+                            isShortCut = true;
                         } else {
+                            // folder container
                             continue;
                         }
-                        if (pkg != null && r.contains(pkg) == false)
-                            r.add(pkg);
+                        ComponentName tempKey = new ComponentName(pkg, clz);
+                        if (!wholeData.containsKey(tempKey)) {
+                            wholeData
+                                    .put(tempKey, new ParsedData(pkg, clz, title,
+                                            isShortCut ? ParsedData.TYPE_SHORTCUT
+                                                    : ParsedData.TYPE_WIDGET));
+                        }
+                        itemsInThisPage.add(new ComponentName(pkg, clz));
                     }
-                    for (int i = 0; i < r.size(); i++) {
-                        String mainPkg = r.get(i);
-                        ParsedData pData = rtn.get(mainPkg);
-                        if (pData == null) {
-                            pData = new ParsedData(mainPkg, null);
-                        }
-                        for (int j = 0; j < r.size(); j++) {
-                            if (j == i)
+                    for (int i = 0; i < itemsInThisPage.size(); i++) {
+                        ComponentName itemInThisPage = itemsInThisPage.get(i);
+                        ParsedData data = wholeData.get(itemInThisPage);
+                        for (int j = 0; j < itemsInThisPage.size(); j++) {
+                            if (j == i) {
                                 continue;
-                            String relatedPkg = r.get(j);
-                            pData.addData(relatedPkg);
-                            ParsedData relatedData = rtn.get(relatedPkg);
-                            if (relatedData == null) {
-                                relatedData = new ParsedData(relatedPkg, null);
                             }
-                            relatedData.addCount();
+                            data.addData(itemsInThisPage.get(j));
                         }
-                        rtn.put(mainPkg, pData);
+                        data.addCount();
                     }
                 } catch (JSONException e) {
                 }
